@@ -1,7 +1,14 @@
 '''
 functions.py
 
+This file contains the functions necessary for running the simulation.
 
+Functions:
+    complex_dot: Computes a dot product of complex numbers.
+    K_delta_periodic: Computes the k-periodic Cauchy kernel.
+
+
+Dependencies: numpy, numba
 '''
 
 import numpy as np
@@ -57,3 +64,81 @@ def K_delta_periodic(
         return 0
     return((-np.sinh(k*y) + 1j * np.sin(k*x)) / denominator)
 
+@njit(parallel=True)
+def compute_sheet_velocity(
+    sheet_z,
+    k,
+    delta
+    ):
+    '''
+    compute_sheet_velocity
+
+    This function evaluates the Birkhoff-Rott equation over the vortex sheet;
+    i.e. this function computes the velocity of the points on the vortex sheet.
+
+    Args:
+        sheet_z (vector, complex): a vector of points discretizing the vortex
+        sheet.
+
+        k: The wavenumber, i.e. 2*pi/wavelength
+
+        delta: Smoothing term for the Cauchy kernel.
+    
+    Returns:
+        Vector of sheet velocities (vector, complex)
+    '''
+
+    N = np.size(sheet_z)
+    sheet_velocity = np.zeros(N)
+    for i in prange(N):
+        for j in range(N):
+            sheet_velocity[i] = K_delta_periodic(
+                sheet_z[i] - sheet_z[j],
+                k,
+                delta
+            )
+
+    return(sheet_velocity)
+
+@njit(parallel=True)
+def integrate_ab2(
+    sheet_z,
+    sheet_dzdt,
+    sheet_dzdt_prev,
+    dt
+    ):
+    '''
+    integrate_ab2
+
+    This function uses AB2 to compute the updated vortex sheet positions with
+    2nd order accuracy. If there is no previous data, one can pass an array
+    containing np.nan, in which case the function reverts to 1st order Euler's
+    method.
+
+    Arguments:
+        sheet_z (vector, complex): a vector of points discretizing the vortex 
+        sheet.
+
+        sheet_dzdt (vector, complex): a vector of velocities at the current
+        timestep.
+
+        sheet_dzdt_prev (vector, complex): a vector of velocities from the
+        previous timestep. If no such data exists, pass a vector of nans to 
+        revert to a 1st order integration scheme.
+
+        dt (scalar): length of timestep.
+    
+    Returns:
+        Vector of new sheet positions (vector, complex)
+    '''
+
+    N = np.size(sheet_z)
+    for i in prange(N):
+        if(not np.isnan(sheet_dzdt_prev[i])):
+            sheet_z[i] = sheet_z[i] + dt * (
+                1.5 * sheet_dzdt[i] - 0.5 * sheet_dzdt_prev[i]
+            )
+        else:
+            sheet_z[i] = sheet_z[i] + dt * sheet_dzdt[i]
+
+    return(sheet_z)
