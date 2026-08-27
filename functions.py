@@ -91,10 +91,10 @@ def compute_sheet_velocity(
 
     N = np.size(sheet_z)
 
-    sheet_velocity = np.zeros(N)
+    sheet_velocity = np.zeros(N, dtype=np.complex128)
     for i in prange(N):
         for j in range(N):
-            sheet_velocity[i] = K_delta_periodic(
+            sheet_velocity[i] = sheet_velocity[i] + K_delta_periodic(
                 sheet_z[i] - sheet_z[j],
                 k,
                 delta
