@@ -67,6 +67,7 @@ def K_delta_periodic(
 @njit(parallel=True)
 def compute_sheet_velocity(
     sheet_z,
+    circulation,
     k,
     delta
     ):
@@ -89,6 +90,7 @@ def compute_sheet_velocity(
     '''
 
     N = np.size(sheet_z)
+
     sheet_velocity = np.zeros(N)
     for i in prange(N):
         for j in range(N):
@@ -96,7 +98,7 @@ def compute_sheet_velocity(
                 sheet_z[i] - sheet_z[j],
                 k,
                 delta
-            )
+            ) * circulation[j]
 
     return(sheet_velocity)
 
@@ -142,3 +144,15 @@ def integrate_ab2(
             sheet_z[i] = sheet_z[i] + dt * sheet_dzdt[i]
 
     return(sheet_z)
+
+@njit(parallel=True)
+def compute_ds(
+    sheet_z
+    ):
+    N = np.size(sheet_z)
+    ds = np.zeros(N)
+    # Is this the proper way to handle the periodic BC?
+    for i in prange(N-1):
+        ds[i] = np.abs(sheet_z[i+1] - sheet_z[i])
+    ds[N-1] = 0
+    return(ds)
