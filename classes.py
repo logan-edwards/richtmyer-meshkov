@@ -16,24 +16,9 @@ class VortexSheet:
         ):
         if(np.size(x_init) != np.size(y_init)):
             self.N = 0
-            return(-1)
-        self.N = np.size(x_init)
+        else:
+            self.N = np.size(x_init)
 
         self.z = x_init + 1j * y_init
         self.dzdt = dxdt_init + 1j * dydt_init
-        self.circulation = circulation_init    
-        return(0)
-
-    def circulation_to_sheet_strength(
-        self,
-        ds
-        ):
-        self.sheet_strength = self.circulation / ds
-        return(0)
-
-    def sheet_strength_to_circulation(
-        self,
-        ds
-        ):
-        self.circulation = self.sheet_strength * ds
-        return(0)
+        self.circulation = circulation_init
