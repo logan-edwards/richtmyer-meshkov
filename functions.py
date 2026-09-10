@@ -140,6 +140,39 @@ def integrate_euler(
         sheet_z[i] = sheet_z[i] + dt * sheet_dzdt[i]
     return(sheet_z)
 
+@njit(parallel=True)
+def integrate_ab2(
+    sheet_z,
+    sheet_dzdt,
+    sheet_dzdt_prev,
+    dt
+    ):
+    '''
+    integrate_ab2
+    
+    This function uses 2nd order Adams-Bashforth to update the sheet position.
+    This can be used for all steps beyond the first timestep.
+
+    Arguments:
+        sheet_z (vector, complex): a vector points discretizing the vortex
+        sheet.
+
+        sheet_dzdt (vector, complex): a vector of velocities at the current
+        timestep.
+
+        sheet_dzdt_prev (vector, complex): a vector of velocities at the prior
+        timestep.
+
+        dt (scalar): length of timestep.
+    '''
+
+    N = np.size(sheet_z)
+    for i in prange(N):
+        sheet_z[i] = sheet_z[i] + 0.5 * dt * (
+            3*sheet_dzdt[i] - sheet_dzdt_prev[i]
+        )
+    return(sheet_z)
+
 def animate_sheet(
     z_data,
     time,
