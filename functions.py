@@ -113,6 +113,106 @@ def compute_sheet_velocity(
     return(sheet_dzdt)
 
 @njit(parallel=True)
+def compute_sheet_strength_derivative(
+    atwood_number,
+    tangent_vector,
+    dUdt,
+    dgamma2ds,
+    acceleration,
+    sheet_strength,
+    dUds
+    ):
+    '''
+    compute_sheet_strength_derivative
+
+    This function computes the derivative of sheet strength with respect to
+    time, dgamma/dt.
+
+    Arguments:
+        atwood_number (scalar): the Atwood number, A=(rho- - rho+)/(rho+ + rho-)
+
+        tangent_vector (vector, complex): an array containing the unit tangent
+        vector (a complex number with modulus 1) at each point on the sheet.
+
+        dUdt (vector, complex): an array containing the fluid acceleration
+        induced by the motion of the sheet itself.
+
+        dgamma2ds (vector, real): an array containing the derivative of
+        (gamma^2) with respect to s, relating to the advection of sheet strength
+        across the vortex sheet.
+
+        acceleration (vector, complex): an array containing the complex-valued
+        reference frame acceleration; a nonzero acceleration term corresponds to
+        a coupled Rayleigh-Taylor instability.
+
+        sheet_strength (vector, real): an array containing the real-valued sheet
+        strength at each point on the body.
+
+        dUds (vector, complex): a vector containing the complex-valued
+        derivative of vortex sheet velocity with respect to arclength. This term
+        represents the effect of sheet stretching on sheet strength evolution.
+
+    Returns:
+        vector of real-valued time derivatives of sheet strength.
+    '''
+
+    N = np.size(tangent_vector)
+    tangent_accel = complex_dot(dUdt, tangent_vector) - 0.125 * dgamma2ds
+    rt_accel = complex_dot(acceleration, tangent_vector)
+    stretch_term = sheet_strength * complex_dot(dUds, tangent_vector)
+
+    return(-2 * atwood_number * (tangent_accel - rt_accel) - stretch_term)
+
+@njit(parallel=True)
+def compute_ds(
+    z,
+    wavelength
+    ):
+    '''
+    compute_ds
+
+    This function computes the differential ds in sheet arclength using a line
+    segment approximation. Improvements may involve a polynomial spline or
+    similar procedure.
+
+    Arguments:
+        z (vector, complex): an array of the complex-valued position of points
+        on the vortex sheet.
+
+        wavelength (scalar): the wavelength over which motion is periodic.
+    '''
+
+    N = np.size(z)
+
+    ds = np.zeros(N)
+    for i in prange(1, N-1):
+        ds[i] = 0.5 * np.abs(z[i+1] - z[i-1])
+    ds[0] = 0.5 * np.abs(z[1] - (z[N-1] - wavelength))
+    ds[N-1] = 0.5 * np.abs((z[0] + wavelength) - z[N-2])
+
+    return(ds)
+
+@njit(parallel=True)
+def compute_tangent_vector(
+    z,
+    ds,
+    wavelength
+    ):
+    '''
+    
+    '''
+    N = np.size(z)
+
+    tangent_vector = np.zeros(N, dtype=np.complex128)
+    for i in prange(1, N-1):
+        tangent_vector[i] = 0.5 * (z[i+1] - z[i-1]) / ds[i]
+    tangent_vector[0] = 0.5 * (z[1] - (z[N-1] - wavelength)) / ds[0]
+    tangent_vector[N-1] = 0.5 * ((z[0] + wavelength) - z[N-2]) / ds[N-1]
+
+    return(tangent_vector)
+
+
+@njit(parallel=True)
 def integrate_euler(
     sheet_z,
     sheet_dzdt,
