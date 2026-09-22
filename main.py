@@ -199,6 +199,10 @@ def run_dynamic_simulation(
         if(i%20==0):
             print(f"\n--- TIMESTEP {i} @ t={i*dt}")
             print(f"Total Circulation = {np.sum(dGamma)}")
+            CFL = 0.5*dt*np.max(np.abs(atwood_number*vs.sheet_strength)/ds)
+            print(f"CFL = {CFL}")
+            if(CFL > 1):
+                print("\t! CFL CONDITION VIOLATED !")
 
     if(enable_animation == True):
         functions.animate_sheet(
@@ -231,8 +235,8 @@ def main():
         dGamma/ds,
         0.2,
         0,
-        1.5,
-        0.0005,
+        3,
+        0.001,
         2*np.pi,
         0.1,
         True
