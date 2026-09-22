@@ -80,11 +80,19 @@ def run_kinematic_simulation(
     
     return(vs)
 
+
+
+
+
+
+
+
 def run_dynamic_simulation(
     x,
     y,
-    circulation,
+    sheet_strength_init,
     atwood_number,
+    rt_accel,
     final_time,
     dt,
     wavenumber,
@@ -104,21 +112,18 @@ def run_dynamic_simulation(
     '''
 
     N = np.size(x)
+    velocity_prev = np.zeros(N, dtype=np.complex128)
+    velocity_prev_prev = np.zeros(N, dtype=np.complex128)
+    dgammadt_prev = np.zeros(N)
 
     vs = classes.VortexSheet(
         x,
         y,
         np.full(N, np.nan),
         np.full(N, np.nan),
-        circulation
+        sheet_strength_init
     )
     wavelength = 2*np.pi/wavenumber
-
-    ds = functions.compute_ds(
-        vs.z,
-        wavelength
-    )
-    vs.sheet_strength = vs.circulation / ds
 
     Nt = int(final_time / dt) + 1
     if(enable_animation == True):
@@ -126,18 +131,45 @@ def run_dynamic_simulation(
         z_data[:,0] = np.copy(vs.z)
 
     for i in range(0,Nt):
-        velocity_prev = np.copy(vs.dzdt)
-        if(enable_animation == True):
-            z_data[:,i] = np.copy(vs.z)
-        
+        ds = functions.compute_ds(
+            vs.z,
+            wavelength
+        )
+        dGamma = vs.sheet_strength * ds
+
         vs.dzdt = functions.compute_sheet_velocity(
             vs.z,
-            vs.circulation,
+            dGamma,
             wavenumber,
             delta
         )
 
-        if(i > 1):
+        vs.tangent_vector = functions.compute_tangent_vector(
+            vs.z,
+            ds,
+            wavelength
+        )
+
+        dUds = np.zeros(N, dtype=np.complex128)
+        for j in range(1,N-1):
+            dUds[j] = (vs.dzdt[j+1] - vs.dzdt[j-1]) / (2*ds[j])
+        dUds[0] = (vs.dzdt[1] - vs.dzdt[N-1]) / (2*ds[0])
+        dUds[N-1] = (vs.dzdt[0] - vs.dzdt[N-2]) / (2*ds[N-1])
+
+        dUdt = np.zeros(N, dtype=np.complex128)
+        for j in range(N):
+            if(i>1):
+                dUdt[j] = (3*vs.dzdt[j] - 4*velocity_prev[j] + 
+                    velocity_prev_prev[j]) / (2*dt)
+            elif(i==1):
+                dUdt[j] = (vs.dzdt[j] - velocity_prev[j]) / dt
+            else:
+                dUdt[j] = 0
+
+        if(enable_animation == True):
+            z_data[:,i] = np.copy(vs.z)
+
+        if(i >= 1):
             vs.z = functions.integrate_ab2(
                 vs.z,
                 vs.dzdt,
@@ -150,36 +182,23 @@ def run_dynamic_simulation(
                 vs.dzdt,
                 dt
             )
+        if(i >= 1):
+            velocity_prev_prev = np.copy(velocity_prev)
         velocity_prev = np.copy(vs.dzdt)
 
-        # Update the sheet strength, circulaton, etc
-        ds = functions.compute_ds(vs.z, wavelength)
-        dUds = np.zeros(N, dtype=np.complex128)
-        for i in range(1,N-1):
-            dUds[i] = (vs.dzdt[i+1] - vs.dzdt[i-1]) / (2*ds[i])
-        dUds[0] = (vs.dzdt[1] - vs.dzdt[0]) / ds[0]
-        dUds[N-1] = (vs.dzdt[N-1] - vs.dzdt[N-2]) / ds[N-1]
-
-        dgammadt = functions.compute_sheet_strength_derivative(
-            0,
-            functions.compute_tangent_vector(vs.z, ds, wavelength),
-            0,
-            0,
-            0,
+        vs.sheet_strength = functions.update_sheet_strength(
+            atwood_number,
+            vs.tangent_vector,
+            dUdt,
+            rt_accel,
             vs.sheet_strength,
-            dUds
+            dUds,
+            dt,
+            ds
         )
-
-        vs.sheet_strength += dt * dgammadt
-        vs.circulation = vs.sheet_strength * ds
-
-        # NOTE: It appears that the stretching term is already factored in when
-        # circulation is constant, i.e. the stretching term being explicitly
-        # computed is actually breaking KCT. Check this condition more closely
-        # and perhaps handle the other 3 (fluid accel, flux, ref frame/RT accel)
-        # independently before converting to circulation for integration. 
-        print(f"Circulation = {np.sum(vs.circulation)}")
-
+        if(i%20==0):
+            print(f"\n--- TIMESTEP {i} @ t={i*dt}")
+            print(f"Total Circulation = {np.sum(dGamma)}")
 
     if(enable_animation == True):
         functions.animate_sheet(
@@ -188,11 +207,11 @@ def run_dynamic_simulation(
             'animation.mp4'
         )
     
-    return(vs)    
+    return(vs)
 
 def main():
     # KRASNY ICS:
-    N = 400
+    N = 1600
     dGamma = np.ones(N)
     dGamma = dGamma * (1/N)
     x = np.zeros(N)
@@ -200,17 +219,22 @@ def main():
     for i in range(N):
         x[i] = i*dGamma[i] + 0.01 * np.sin(2*np.pi*i*dGamma[i])
         y[i] = -0.01 * np.sin(2*np.pi*i*dGamma[i])
-    
+    z = x+1j*y
+    ds = functions.compute_ds(
+        z,
+        1
+    )
 
     run_dynamic_simulation(
         x,
         y,
-        dGamma,
-        0,
-        4,
-        0.01,
-        2*np.pi,
+        dGamma/ds,
         0.2,
+        0,
+        1.5,
+        0.0005,
+        2*np.pi,
+        0.1,
         True
     )
 

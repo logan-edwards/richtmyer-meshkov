@@ -113,14 +113,15 @@ def compute_sheet_velocity(
     return(sheet_dzdt)
 
 @njit(parallel=True)
-def compute_sheet_strength_derivative(
+def update_sheet_strength(
     atwood_number,
     tangent_vector,
     dUdt,
-    dgamma2ds,
     acceleration,
     sheet_strength,
-    dUds
+    dUds,
+    dt,
+    ds_cell
     ):
     '''
     compute_sheet_strength_derivative
@@ -157,11 +158,41 @@ def compute_sheet_strength_derivative(
     '''
 
     N = np.size(tangent_vector)
-    tangent_accel = complex_dot(dUdt, tangent_vector) - 0.125 * dgamma2ds
-    rt_accel = complex_dot(acceleration, tangent_vector)
-    stretch_term = sheet_strength * complex_dot(dUds, tangent_vector)
+    RHS = -2 * atwood_number * (
+        complex_dot(dUdt, tangent_vector) +
+        complex_dot(acceleration, tangent_vector)
+    ) - sheet_strength * complex_dot(dUds, tangent_vector)
 
-    return(-2 * atwood_number * (tangent_accel - rt_accel) - stretch_term)
+    def f(gamma, A):
+        return((A/4)*gamma**2)
+    F = np.zeros(N)
+    for j in range(0, N-1):
+        gammaL = sheet_strength[j]
+        gammaR = sheet_strength[j+1]
+        if(gammaL < gammaR):
+            F[j] = min(f(gammaL, atwood_number), f(gammaR, atwood_number))
+        elif(gammaL > gammaR):
+            F[j] = max(f(gammaL, atwood_number), f(gammaR, atwood_number))
+        else:
+            F[j] = min(f(gammaL, atwood_number), 0)
+
+    # Rightmost endpoint, which wraps
+    gammaL = sheet_strength[N-1]
+    gammaR = sheet_strength[0]
+    if(gammaL < gammaR):
+        F[N-1] = min(f(gammaL, atwood_number), f(gammaR, atwood_number))
+    elif(gammaL > gammaR):
+        F[N-1] = max(f(gammaL, atwood_number), f(gammaR, atwood_number))
+    else:
+        F[N-1] = min(f(gammaL, atwood_number), 0)
+
+    gamma_new = np.zeros(N)
+    for j in range(1, N):
+        gamma_new[j] = sheet_strength[j] - (dt/ds_cell[j]) * (
+            F[j] - F[j-1]) + dt*RHS[j]
+    gamma_new[0] = sheet_strength[0] - (dt/ds_cell[0]) * (
+        F[0] - F[N-1]) + dt*RHS[0]
+    return(gamma_new)
 
 @njit(parallel=True)
 def compute_ds(
