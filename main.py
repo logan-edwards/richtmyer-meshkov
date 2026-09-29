@@ -110,11 +110,10 @@ def run_dynamic_simulation(
     Returns:
         Instance of the VortexSheet class
     '''
-
+    POINT_INSERTION_THRESH = 0.005
     N = np.size(x)
     velocity_prev = np.zeros(N, dtype=np.complex128)
     velocity_prev_prev = np.zeros(N, dtype=np.complex128)
-    dgammadt_prev = np.zeros(N)
 
     vs = classes.VortexSheet(
         x,
@@ -127,10 +126,37 @@ def run_dynamic_simulation(
 
     Nt = int(final_time / dt) + 1
     if(enable_animation == True):
-        z_data = np.full((N, Nt), np.nan+1j*np.nan)
-        z_data[:,0] = np.copy(vs.z)
+        z_frames = []
+        frame_times = []
 
     for i in range(0,Nt):
+        count_inserted = 0
+        for j in range(N-1):
+            if(np.abs(vs.z[j+count_inserted]-vs.z[j+count_inserted+1]) > POINT_INSERTION_THRESH):
+                z_insert = 0.5 * (vs.z[j+count_inserted] + vs.z[j+count_inserted+1])
+                strength_new = 0.5 * (vs.sheet_strength[j+count_inserted] + vs.sheet_strength[j+count_inserted+1])
+                vel_insert = 0.5 * (vs.dzdt[j+count_inserted] + vs.dzdt[j+count_inserted+1])
+                vel_prev_insert = 0.5 * (velocity_prev[j+count_inserted] + velocity_prev[j+count_inserted+1])
+                vel_prev_prev_insert = 0.5 * (velocity_prev_prev[j+count_inserted] + velocity_prev_prev[j+count_inserted+1])
+                vs.z = np.insert(vs.z, j+count_inserted+1, z_insert)
+                vs.sheet_strength = np.insert(vs.sheet_strength, j+count_inserted+1, strength_new)
+                vs.dzdt = np.insert(vs.dzdt, j+count_inserted+1, vel_insert)
+                velocity_prev = np.insert(velocity_prev, j+count_inserted+1, vel_prev_insert)
+                velocity_prev_prev = np.insert(velocity_prev_prev, j+count_inserted+1, vel_prev_prev_insert)
+                count_inserted += 1
+        if(np.abs(vs.z[0] + wavelength - vs.z[N+count_inserted-1]) > POINT_INSERTION_THRESH):
+            z_insert = 0.5 * (vs.z[0] + wavelength + vs.z[N+count_inserted-1])
+            strength_new = 0.5 * (vs.sheet_strength[0] + vs.sheet_strength[N+count_inserted-1])
+            vel_insert = 0.5 * (vs.dzdt[0] + vs.dzdt[N+count_inserted-1])
+            vel_prev_insert = 0.5 * (velocity_prev[0] + velocity_prev[N+count_inserted-1])
+            vel_prev_prev_insert = 0.5 * (velocity_prev_prev[0] + velocity_prev_prev[N+count_inserted-1])
+            vs.z = np.append(vs.z, z_insert)
+            vs.sheet_strength = np.append(vs.sheet_strength, strength_new)
+            vs.dzdt = np.append(vs.dzdt, vel_insert)
+            velocity_prev = np.append(velocity_prev, vel_prev_insert)
+            velocity_prev_prev = np.append(velocity_prev_prev, vel_prev_prev_insert)
+        N=np.size(vs.z)
+
         ds = functions.compute_ds(
             vs.z,
             wavelength
@@ -166,8 +192,7 @@ def run_dynamic_simulation(
             else:
                 dUdt[j] = 0
 
-        if(enable_animation == True):
-            z_data[:,i] = np.copy(vs.z)
+
 
         if(i >= 1):
             vs.z = functions.integrate_ab2(
@@ -199,30 +224,38 @@ def run_dynamic_simulation(
         if(i%20==0):
             print(f"\n--- TIMESTEP {i} @ t={i*dt}")
             print(f"Total Circulation = {np.sum(dGamma)}")
+            if(count_inserted > 0):
+                print(f"Sheet refined to {N} points")
             CFL = 0.5*dt*np.max(np.abs(atwood_number*vs.sheet_strength)/ds)
             print(f"CFL = {CFL}")
             if(CFL > 1):
                 print("\t! CFL CONDITION VIOLATED !")
+            if(enable_animation == True):
+                z_frames.append(vs.z.copy())
+                frame_times.append(i*dt) # NOTE needs to be changed for variable dt
 
     if(enable_animation == True):
         functions.animate_sheet(
-            z_data,
-            np.linspace(0,final_time,Nt),
-            'animation.mp4'
+        z_frames,
+        frame_times,
+        'animation.mp4'
         )
+
+
     
     return(vs)
 
 def main():
     # KRASNY ICS:
-    N = 1600
+    N = 800
     dGamma = np.ones(N)
     dGamma = dGamma * (1/N)
     x = np.zeros(N)
     y = np.zeros(N)
     for i in range(N):
-        x[i] = i*dGamma[i] + 0.01 * np.sin(2*np.pi*i*dGamma[i])
-        y[i] = -0.01 * np.sin(2*np.pi*i*dGamma[i])
+        x[i] = i*dGamma[i]
+        y[i] = 0
+        dGamma[i] = dGamma[i] * 2*np.sin(2*np.pi*x[i])
     z = x+1j*y
     ds = functions.compute_ds(
         z,
@@ -233,10 +266,10 @@ def main():
         x,
         y,
         dGamma/ds,
-        0.2,
-        0,
-        3,
-        0.001,
+        0.6,
+        0j,        # NOTE check sign convention on this
+        3.0,
+        0.0001,
         2*np.pi,
         0.1,
         True

@@ -311,41 +311,44 @@ def animate_sheet(
     ):
     fig, ax = plt.subplots()
 
+    n_frames = len(z_data)
+
     sheet_line, = ax.plot(
-        np.real(z_data[:, 0]),
-        np.imag(z_data[:, 0]),
+        np.real(z_data[0]),
+        np.imag(z_data[0]),
         'k-'
     )
     
-    ax.set_xlim(
-        np.nanmin(np.real(z_data)),
-        np.nanmax(np.real(z_data))
-    )
-    ax.set_ylim(
-        np.nanmin(np.imag(z_data)),
-        np.nanmax(np.imag(z_data))
-    )
-    
-    ax.set_aspect('equal')
+    xmin = min(np.min(np.real(z)) for z in z_data)
+    xmax = max(np.max(np.real(z)) for z in z_data)
+    ymin = min(np.min(np.imag(z)) for z in z_data)
+    ymax = max(np.max(np.imag(z)) for z in z_data)
+
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
+    ax.set_aspect("equal")
+
+    title = ax.set_title(f"t={time[0]:.2f}")
 
     def update(frame):
-        sheet_line.set_xdata(np.real(z_data[:, frame]))
-        sheet_line.set_ydata(np.imag(z_data[:, frame]))
+        # Each frame may contain a different number of markers.
+        sheet_line.set_xdata(np.real(z_data[frame]))
+        sheet_line.set_ydata(np.imag(z_data[frame]))
 
-        
-        ax.set_title(f"t={time[frame]:.2f}")
-        return sheet_line
+        title.set_text(f"t={time[frame]:.2f}")
+
+        return sheet_line, title
 
     desired_time = 10  # seconds
-    fps_desired = z_data.shape[1] / desired_time
-    interval_desired = desired_time * 1000 / z_data.shape[1]
+    fps_desired = n_frames / desired_time
+    interval_desired = desired_time * 1000 / n_frames
 
     print(f"framerate = {fps_desired} fps")
 
     sheet_animation = animation.FuncAnimation(
         fig,
         update,
-        frames=z_data.shape[1],
+        frames=n_frames,
         interval=interval_desired,
         blit=False
     )
