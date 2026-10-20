@@ -243,17 +243,17 @@ def run_dynamic_simulation(
     if(enable_animation == True):
         z_frames = []
         sheet_str_frames = []
-        matl_coord_frames = []
+        alpha_frames = []
         frame_times = []
         for i in range(len(sim_history)):
             if(i%save_rate == 0):
                 z_frames.append(sim_history[i].z)
                 sheet_str_frames.append(sim_history[i].sheet_strength)
-                matl_coord_frames.append(sim_history[i].material_coord)
+                alpha_frames.append(sim_history[i].alpha)
                 strength_plot_frames = [
                     material_coord + 1j * sheet_strength
                     for material_coord, sheet_strength
-                    in zip(matl_coord_frames, sheet_str_frames)
+                    in zip(alpha_frames, sheet_str_frames)
                 ]
                 frame_times.append(time_history[i])
         functions.animate_sheet(
