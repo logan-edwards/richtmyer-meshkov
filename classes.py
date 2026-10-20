@@ -6,6 +6,7 @@ class VortexSheet:
     dzdt: list
     circulation: list
     sheet_strength: list
+    alpha: list
     def __init__(
         self,
         x_init,
@@ -22,3 +23,6 @@ class VortexSheet:
         self.z = x_init + 1j * y_init
         self.dzdt = dxdt_init + 1j * dydt_init
         self.sheet_strength = sheet_strength_init
+        self.alpha = np.zeros(self.N)
+        for i in range(self.N):
+            self.alpha[i] = i/self.N

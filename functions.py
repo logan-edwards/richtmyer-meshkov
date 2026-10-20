@@ -12,9 +12,10 @@ Dependencies: numpy, numba
 '''
 
 import numpy as np
-from numba import njit, prange
+from numba import njit, prange, objmode
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+import time
 
 @njit
 def complex_dot(
@@ -113,6 +114,62 @@ def compute_sheet_velocity(
     return(sheet_dzdt)
 
 @njit(parallel=True)
+def compute_dFds(
+    sheet_strength,
+    ds,
+    atwood_number
+    ):
+    # TODO: check if the loop for computing fluxes can be parallelized
+    # TODO: comment the code better
+
+    N = np.size(sheet_strength)
+
+    def f(gamma, A):
+        return((A/4)*gamma**2)
+    F = np.zeros(N)
+    for i in range(0, N-1):
+        gammaL = sheet_strength[i]
+        gammaR = sheet_strength[i+1]
+        if(gammaL < gammaR):
+            F[i] = min(f(gammaL, atwood_number), f(gammaR, atwood_number))
+        elif(gammaL > gammaR):
+            F[i] = max(f(gammaL, atwood_number), f(gammaR, atwood_number))
+        else:
+            F[i] = min(f(gammaL, atwood_number), 0)
+
+    # Rightmost endpoint, which wraps
+    gammaL = sheet_strength[N-1]
+    gammaR = sheet_strength[0]
+    if(gammaL < gammaR):
+        F[N-1] = min(f(gammaL, atwood_number), f(gammaR, atwood_number))
+    elif(gammaL > gammaR):
+        F[N-1] = max(f(gammaL, atwood_number), f(gammaR, atwood_number))
+    else:
+        F[N-1] = min(f(gammaL, atwood_number), 0)
+
+    dFds = np.zeros(N)
+    for i in range(1, N):
+        dFds[i] = (F[i] - F[i-1])/ds[i]
+    dFds[0] = (F[0] - F[N-1])/ds[0]
+
+    return(dFds)
+
+@njit(parallel=True)
+def compute_dUds(
+    dzdt,
+    ds
+    ):
+    N = np.size(dzdt)
+    dUds = np.zeros(N, dtype=np.complex128)
+    for i in prange(1, N-1):
+        dUds[i] = (dzdt[i+1] - dzdt[i-1]) / (2*ds[i])
+    dUds[0] = (dzdt[1] - dzdt[N-1]) / (2*ds[0])
+    dUds[N-1] = (dzdt[0] - dzdt[N-2]) / (2*ds[N-1])
+
+    return(dUds)    
+
+
+@njit(parallel=True)
 def update_sheet_strength(
     atwood_number,
     tangent_vector,
@@ -124,6 +181,8 @@ def update_sheet_strength(
     ds_cell
     ):
     '''
+    THIS FUNCTION IS DEPRECATED
+
     compute_sheet_strength_derivative
 
     This function computes the derivative of sheet strength with respect to
@@ -193,6 +252,16 @@ def update_sheet_strength(
     gamma_new[0] = sheet_strength[0] - (dt/ds_cell[0]) * (
         F[0] - F[N-1]) + dt*RHS[0]
     return(gamma_new)
+
+def point_insertion(
+    z, 
+    alpha,
+    dzdt_prev1, 
+    dzdt_prev2,
+    tol
+    ):
+    return(z,alpha,dzdt_prev1,dzdt_prev2)
+
 
 @njit(parallel=True)
 def compute_ds(
@@ -304,10 +373,47 @@ def integrate_ab2(
         )
     return(sheet_z)
 
+@njit(parallel=True)
+def integrate_ab2_adaptive(
+    sheet_z,
+    sheet_dzdt,
+    sheet_dzdt_prev,
+    dt,
+    dt_prev
+    ):
+    '''
+    integrate_ab2_adaptive
+    
+    This function uses 2nd order Adams-Bashforth to update the sheet position.
+    This can be used for all steps beyond the first timestep.
+
+    Arguments:
+        sheet_z (vector, complex): a vector points discretizing the vortex
+        sheet.
+
+        sheet_dzdt (vector, complex): a vector of velocities at the current
+        timestep.
+
+        sheet_dzdt_prev (vector, complex): a vector of velocities at the prior
+        timestep.
+
+        dt (scalar): length of timestep.
+    '''
+
+    r = dt/dt_prev
+    N = np.size(sheet_z)
+    for i in prange(N):
+        sheet_z[i] = sheet_z[i] + dt * (
+            (1.0 + 0.5 * r) * sheet_dzdt[i]
+            - 0.5 * r * sheet_dzdt_prev[i]
+        )
+    return(sheet_z)
+
 def animate_sheet(
     z_data,
     time,
-    filename
+    filename,
+    aspect_ratio
     ):
     fig, ax = plt.subplots()
 
@@ -326,7 +432,7 @@ def animate_sheet(
 
     ax.set_xlim(xmin, xmax)
     ax.set_ylim(ymin, ymax)
-    ax.set_aspect("equal")
+    ax.set_aspect(aspect_ratio)
 
     title = ax.set_title(f"t={time[0]:.2f}")
 

@@ -7,6 +7,7 @@ import functions
 import classes
 
 import numpy as np
+import copy
 
 def run_kinematic_simulation(
     x, 
@@ -80,13 +81,6 @@ def run_kinematic_simulation(
     
     return(vs)
 
-
-
-
-
-
-
-
 def run_dynamic_simulation(
     x,
     y,
@@ -97,23 +91,26 @@ def run_dynamic_simulation(
     dt,
     wavenumber,
     delta,
-    enable_animation    
+    enable_animation,
+    save_rate,
+    disp,
+    disp_rate
     ):
     '''
     run_dynamic_simulation
 
     Simulates the vortex sheet roll-up governed by the Birkhoff-Rott equation,
     coupled with the vortex sheet strength evolution.
-
     Args:
         
     Returns:
         Instance of the VortexSheet class
     '''
-    POINT_INSERTION_THRESH = 0.005
     N = np.size(x)
-    velocity_prev = np.zeros(N, dtype=np.complex128)
-    velocity_prev_prev = np.zeros(N, dtype=np.complex128)
+    velocity_prev1 = np.full(N, np.nan, dtype=np.complex128)
+    velocity_prev2 = np.full(N, np.nan, dtype=np.complex128)
+    dt_prev1 = 0
+    dt_prev2 = 0
 
     vs = classes.VortexSheet(
         x,
@@ -122,84 +119,112 @@ def run_dynamic_simulation(
         np.full(N, np.nan),
         sheet_strength_init
     )
+
     wavelength = 2*np.pi/wavenumber
 
-    Nt = int(final_time / dt) + 1
-    if(enable_animation == True):
-        z_frames = []
-        frame_times = []
+    sim_history = []
+    time_history = []
 
-    for i in range(0,Nt):
-        count_inserted = 0
-        for j in range(N-1):
-            if(np.abs(vs.z[j+count_inserted]-vs.z[j+count_inserted+1]) > POINT_INSERTION_THRESH):
-                z_insert = 0.5 * (vs.z[j+count_inserted] + vs.z[j+count_inserted+1])
-                strength_new = 0.5 * (vs.sheet_strength[j+count_inserted] + vs.sheet_strength[j+count_inserted+1])
-                vel_insert = 0.5 * (vs.dzdt[j+count_inserted] + vs.dzdt[j+count_inserted+1])
-                vel_prev_insert = 0.5 * (velocity_prev[j+count_inserted] + velocity_prev[j+count_inserted+1])
-                vel_prev_prev_insert = 0.5 * (velocity_prev_prev[j+count_inserted] + velocity_prev_prev[j+count_inserted+1])
-                vs.z = np.insert(vs.z, j+count_inserted+1, z_insert)
-                vs.sheet_strength = np.insert(vs.sheet_strength, j+count_inserted+1, strength_new)
-                vs.dzdt = np.insert(vs.dzdt, j+count_inserted+1, vel_insert)
-                velocity_prev = np.insert(velocity_prev, j+count_inserted+1, vel_prev_insert)
-                velocity_prev_prev = np.insert(velocity_prev_prev, j+count_inserted+1, vel_prev_prev_insert)
-                count_inserted += 1
-        if(np.abs(vs.z[0] + wavelength - vs.z[N+count_inserted-1]) > POINT_INSERTION_THRESH):
-            z_insert = 0.5 * (vs.z[0] + wavelength + vs.z[N+count_inserted-1])
-            strength_new = 0.5 * (vs.sheet_strength[0] + vs.sheet_strength[N+count_inserted-1])
-            vel_insert = 0.5 * (vs.dzdt[0] + vs.dzdt[N+count_inserted-1])
-            vel_prev_insert = 0.5 * (velocity_prev[0] + velocity_prev[N+count_inserted-1])
-            vel_prev_prev_insert = 0.5 * (velocity_prev_prev[0] + velocity_prev_prev[N+count_inserted-1])
-            vs.z = np.append(vs.z, z_insert)
-            vs.sheet_strength = np.append(vs.sheet_strength, strength_new)
-            vs.dzdt = np.append(vs.dzdt, vel_insert)
-            velocity_prev = np.append(velocity_prev, vel_prev_insert)
-            velocity_prev_prev = np.append(velocity_prev_prev, vel_prev_prev_insert)
-        N=np.size(vs.z)
+    time = 0
+    sim_step = 0
+    while(time < final_time):
+        # Save for animation if applicable
+        if(disp==True):
+            if(sim_step%disp_rate==0 and sim_step != 0):
+                print(f"-" * 50)
+                print(f"\n--- SIM STEP {sim_step} @ t={time}")
+                print(f"Total Circulation = {np.sum(dGamma)}")
+                print(f"Sheet size = {N} points")
+                print(f"Timestep = {dt}")
+                print(f"-" * 50)
 
+        sim_history.append(copy.deepcopy(vs)) # NOTE this is fairly expensive and should be changed to only save data when wanted
+        time_history.append(time)
+        
+
+        vs.z,vs.alpha,velocity_prev1,velocity_prev2 = functions.point_insertion(
+            vs.z,
+            vs.alpha,
+            velocity_prev1,
+            velocity_prev2,
+            delta / 10
+        )
+        N = np.size(vs.z)
+
+        # Compute immediately available quantities at time t:
+        # ds, d\Gamma, \hat{T}, U, dU/ds
         ds = functions.compute_ds(
             vs.z,
             wavelength
         )
         dGamma = vs.sheet_strength * ds
-
+        vs.tangent_vector = functions.compute_tangent_vector(
+            vs.z,
+            ds,
+            wavelength
+        )
         vs.dzdt = functions.compute_sheet_velocity(
             vs.z,
             dGamma,
             wavenumber,
             delta
         )
-
-        vs.tangent_vector = functions.compute_tangent_vector(
-            vs.z,
-            ds,
-            wavelength
+        dUds = functions.compute_dUds(
+            vs.dzdt,
+            ds
         )
 
-        dUds = np.zeros(N, dtype=np.complex128)
-        for j in range(1,N-1):
-            dUds[j] = (vs.dzdt[j+1] - vs.dzdt[j-1]) / (2*ds[j])
-        dUds[0] = (vs.dzdt[1] - vs.dzdt[N-1]) / (2*ds[0])
-        dUds[N-1] = (vs.dzdt[0] - vs.dzdt[N-2]) / (2*ds[N-1])
+        # Compute the CFL number and choose dt based on that
+        # If CFL is small, increase dt slightly;
+        # If CFL is large, cut dt in half;
+        # Then: take min value between dt and the time to the end of sim as dt
 
-        dUdt = np.zeros(N, dtype=np.complex128)
-        for j in range(N):
-            if(i>1):
-                dUdt[j] = (3*vs.dzdt[j] - 4*velocity_prev[j] + 
-                    velocity_prev_prev[j]) / (2*dt)
-            elif(i==1):
-                dUdt[j] = (vs.dzdt[j] - velocity_prev[j]) / dt
-            else:
-                dUdt[j] = 0
+        CFL = 0.5*dt*np.max(np.abs(atwood_number*vs.sheet_strength)/ds)
+        if(CFL < 0.05):
+            dt = 1.25 * dt
+        elif(CFL > 0.3):
+            dt = 0.5 * dt # NOTE this should be refined to repeatedly half dt until CFL is met.
+        dt = np.minimum(dt, final_time-time)
 
+        # Compute dU/dt
+        # If we are on the 2nd or greater sim step, use BDF2
+        # If we are on the 1st sim step, use BDF1
+        # If we are on the 0th (initial) step, use analytical expression
+        if(sim_step >= 2):
+            r = dt_prev1/dt_prev2
+            c1 = (1+2*r)/(1+r)
+            c2 = (1+r)
+            c3 = (r*r)/(1+r)
+            dUdt = (c1 * vs.dzdt - c2 * velocity_prev1 + c3 * velocity_prev2)/dt_prev1
+        elif(sim_step == 1):
+            dUdt = (vs.dzdt - velocity_prev1)/dt_prev1
+        else:
+            dUdt = np.zeros(N, dtype=np.complex128) # NOTE this is a placeholder for the analytical expression
 
+        # Compute numerical flux dFds
+        dFds = functions.compute_dFds(
+            vs.sheet_strength,
+            ds,
+            atwood_number
+        )
 
-        if(i >= 1):
-            vs.z = functions.integrate_ab2(
+        # Compute the sheet strength derivative, d\gamma/dt
+        dgammadt = (
+            -2 * atwood_number * (
+            functions.complex_dot(dUdt, vs.tangent_vector)
+            - functions.complex_dot(rt_accel, vs.tangent_vector)
+            ) 
+            - dFds 
+            - vs.sheet_strength * functions.complex_dot(dUds, vs.tangent_vector)
+        )
+        vs.sheet_strength = vs.sheet_strength + dt * dgammadt # NOTE this is a placeholder for potentially higher-order (2nd order) time integration, although the flux is still 1st order(?)
+        if(sim_step >= 1):
+            vs.z = functions.integrate_ab2_adaptive(
                 vs.z,
                 vs.dzdt,
-                velocity_prev,
-                dt
+                velocity_prev1,
+                dt,
+                dt_prev1
             )
         else:
             vs.z = functions.integrate_euler(
@@ -207,47 +232,49 @@ def run_dynamic_simulation(
                 vs.dzdt,
                 dt
             )
-        if(i >= 1):
-            velocity_prev_prev = np.copy(velocity_prev)
-        velocity_prev = np.copy(vs.dzdt)
+        velocity_prev2 = velocity_prev1.copy()
+        velocity_prev1 = vs.dzdt.copy()
+        dt_prev2 = dt_prev1
+        dt_prev1 = dt
 
-        vs.sheet_strength = functions.update_sheet_strength(
-            atwood_number,
-            vs.tangent_vector,
-            dUdt,
-            rt_accel,
-            vs.sheet_strength,
-            dUds,
-            dt,
-            ds
-        )
-        if(i%20==0):
-            print(f"\n--- TIMESTEP {i} @ t={i*dt}")
-            print(f"Total Circulation = {np.sum(dGamma)}")
-            if(count_inserted > 0):
-                print(f"Sheet refined to {N} points")
-            CFL = 0.5*dt*np.max(np.abs(atwood_number*vs.sheet_strength)/ds)
-            print(f"CFL = {CFL}")
-            if(CFL > 1):
-                print("\t! CFL CONDITION VIOLATED !")
-            if(enable_animation == True):
-                z_frames.append(vs.z.copy())
-                frame_times.append(i*dt) # NOTE needs to be changed for variable dt
+        sim_step += 1
+        time = time + dt
 
     if(enable_animation == True):
+        z_frames = []
+        sheet_str_frames = []
+        matl_coord_frames = []
+        frame_times = []
+        for i in range(len(sim_history)):
+            if(i%save_rate == 0):
+                z_frames.append(sim_history[i].z)
+                sheet_str_frames.append(sim_history[i].sheet_strength)
+                matl_coord_frames.append(sim_history[i].material_coord)
+                strength_plot_frames = [
+                    material_coord + 1j * sheet_strength
+                    for material_coord, sheet_strength
+                    in zip(matl_coord_frames, sheet_str_frames)
+                ]
+                frame_times.append(time_history[i])
         functions.animate_sheet(
         z_frames,
         frame_times,
-        'animation.mp4'
+        'animation.mp4',
+        'equal'
+        )
+        functions.animate_sheet(
+            strength_plot_frames,
+            frame_times,
+            'sheet_strength.mp4',
+            'auto'
         )
 
+    return(sim_history,time_history)
 
-    
-    return(vs)
 
 def main():
     # KRASNY ICS:
-    N = 800
+    N = 1000
     dGamma = np.ones(N)
     dGamma = dGamma * (1/N)
     x = np.zeros(N)
@@ -262,17 +289,20 @@ def main():
         1
     )
 
-    run_dynamic_simulation(
+    sim_hist, dt_hist = run_dynamic_simulation(
         x,
         y,
         dGamma/ds,
         0.6,
         0j,        # NOTE check sign convention on this
-        3.0,
+        1.5,
         0.0001,
         2*np.pi,
         0.1,
-        True
+        True,
+        20,
+        True,
+        20
     )
 
     return(0)
