@@ -253,13 +253,249 @@ def update_sheet_strength(
         F[0] - F[N-1]) + dt*RHS[0]
     return(gamma_new)
 
+@njit(parallel=True)
+def compute_exact_dgammadt(
+    z,
+    dzdt,
+    sheet_strength,
+    ds,
+    dFds,
+    dUds,
+    tangent_vector,
+    atwood_number,
+    rt_accel,
+    wavenumber,
+    delta
+    ):
+    # CHECK THAT THE ASSIGNMENT OF DKDT IS CORRECT NOTE
+    N=np.size(z)
+    K = np.zeros((N,N), dtype=np.complex128)
+    dKdt = np.zeros((N,N), dtype=np.complex128)
+    ddsdt = np.zeros(N)
+    for i in prange(N-1):
+        ddsdt[i] = complex_dot(tangent_vector[i],  (dzdt[i+1] - dzdt[i]))
+    ddsdt[N-1] = complex_dot(tangent_vector[N-1], (dzdt[0] - dzdt[N-1]))
+    dUdt_sum = np.zeros(N, dtype=np.complex128)
+    for i in prange(N):
+        for j in range(N):
+            K[i,j] = K_delta_periodic(z[i]-z[j], wavenumber, delta)
+            x = np.real(z[i]-z[j])
+            y = np.imag(z[i]-z[j])
+            xdot = np.real(dzdt[i] - dzdt[j])
+            ydot = np.imag(dzdt[i] - dzdt[j])
+            Den = np.cosh(wavenumber * y) - np.cos(wavenumber * x) + delta**2
+            Dendot = (
+                wavenumber * np.sinh(wavenumber * y) * ydot
+                + wavenumber * np.sin(wavenumber * x) * xdot
+            )
+            Num = -np.sinh(wavenumber * y) + 1j * np.sin(wavenumber * x)
+            Numdot = (
+                -wavenumber * np.cosh(wavenumber * y) * ydot
+                + 1j * wavenumber * np.cos(wavenumber * x) * xdot
+            )
+            dKdt[i,j] = (Numdot * Den - Dendot * Num)/(2*Den**2)
+            dUdt_sum[i] = dUdt_sum[i] + (
+                dKdt[i,j] * sheet_strength[j] * ds[j]
+                + K[i,j] * sheet_strength[j] * ddsdt[j]
+            )
+
+    R = (
+        2 * atwood_number * complex_dot(rt_accel, tangent_vector)
+        - dFds
+        - sheet_strength * complex_dot(dUds, tangent_vector)
+        - 2 * atwood_number * complex_dot(dUdt_sum, tangent_vector)
+    )
+
+    coeffs = np.zeros((N,N))
+    for i in prange(N):
+        for j in range(N):
+            coeffs[i,j] = complex_dot(tangent_vector[i], K[i,j] * ds[j])
+
+    dgammadt = np.linalg.solve(2 * atwood_number * coeffs + np.identity(N), R)
+    return(dgammadt)
+    
+
+@njit
 def point_insertion(
     z, 
     alpha,
+    sheet_strength,
     dzdt_prev1, 
     dzdt_prev2,
+    wavelength,
     tol
     ):
+    N = np.size(z)
+
+    # Identify indices which need points inserted
+    insert_after = []
+    for i in range(N-1):
+        if(np.abs(z[i] - z[i+1]) > tol):
+            insert_after.append(i)
+    if(np.abs(z[N-1] - (z[0] + wavelength)) > tol):
+        insert_after.append(N-1)
+
+    number_inserted = len(insert_after)
+
+    if(number_inserted == 0):
+        return(0,z,alpha,sheet_strength,dzdt_prev1,dzdt_prev2)
+
+    N_new = N + number_inserted
+    z_new = np.empty(N_new, dtype=np.complex128)
+    alpha_new = np.empty(N_new, dtype=np.float64)
+    gamma_new = np.empty(N_new, dtype=np.float64)
+    u1_new = np.empty(N_new, dtype=np.complex128)
+    u2_new = np.empty(N_new, dtype=np.complex128)
+
+    out = 0 # destination in expanded array
+    k = 0 # identifies next requested insertion
+    for i in range(N):
+        z_new[out] = z[i]
+        alpha_new[out] = alpha[i]
+        gamma_new[out] = sheet_strength[i]
+        u1_new[out] = dzdt_prev1[i]
+        u2_new[out] = dzdt_prev2[i]
+        out = out + 1
+        if(k < number_inserted and insert_after[k] == i):
+            i0 = (i-1)%N
+            i1 = i
+            i2 = (i+1)%N
+            i3 = (i+2)%N
+
+            a0 = alpha[i0]
+            a1 = alpha[i1]
+            a2 = alpha[i2]
+            a3 = alpha[i3]
+
+
+            
+            alpha_insert = 0.5 * (a1 + a2)
+            w0 = (
+                (alpha_insert - a1) 
+                * (alpha_insert - a2) 
+                * (alpha_insert - a3) / ((a0 - a1) * (a0 - a2) * (a0 - a3))
+            )
+            w1 = (
+                (alpha_insert - a0)
+                * (alpha_insert - a2)
+                * (alpha_insert - a3) / ((a1 - a0) * (a1-a2) * (a1 - a3))
+            )
+            w2 = (
+                (alpha_insert - a0)
+                * (alpha_insert - a1)
+                * (alpha_insert - a3) / ((a2 - a0) * (a2 - a1) * (a2 - a3))
+            )
+            w3 = (
+                (alpha_insert - a0)
+                * (alpha_insert - a1)
+                * (alpha_insert - a2) / ((a3 - a0) * (a3 - a1) * (a3 - a2))
+            )
+
+            for i in [i0, i1, i2, i3]:
+                if(np.real(z[i]) > wavelength):
+                    z[i] = z[i] - wavelength
+
+            z_insert = w0 * z[i0] + w1 * z[i1] + w2 * z[i2] + w3 * z[i3]
+            gamma_insert = (
+                w0 * sheet_strength[i0]
+                + w1 * sheet_strength[i1]
+                + w2 * sheet_strength[i2]
+                + w3 * sheet_strength[i3]
+            )
+            u1_insert = (
+                w0 * dzdt_prev1[i0]
+                + w1 * dzdt_prev1[i1]
+                + w2 * dzdt_prev1[i2]
+                + w3 * dzdt_prev1[i3]
+            )
+            u2_insert = (
+                w0 * dzdt_prev2[i0]
+                + w1 * dzdt_prev2[i1]
+                + w2 * dzdt_prev2[i2]
+                + w3 * dzdt_prev2[i3]
+            )
+
+            z_new[out] = z_insert
+            alpha_new[out] = alpha_insert
+            gamma_new[out] = gamma_insert
+            u1_new[out] = u1_insert
+            u2_new[out] = u2_insert
+            
+            out = out + 1
+            k = k + 1
+    return(N_new-N,z_new, alpha_new, gamma_new, u1_new, u2_new)
+
+@njit
+def point_insertion_linear(
+    z, 
+    alpha,
+    sheet_strength,
+    dzdt_prev1, 
+    dzdt_prev2,
+    wavelength,
+    tol
+    ):
+    N = np.size(z)
+
+    # Identify indices which need points inserted
+    insert_after = []
+    for i in range(N-1):
+        if(np.abs(z[i] - z[i+1]) > tol):
+            insert_after.append(i)
+    if(np.abs(z[N-1] - (z[0] + wavelength)) > tol):
+        insert_after.append(N-1)
+
+    number_inserted = len(insert_after)
+
+    if(number_inserted == 0):
+        return(0,z,alpha,sheet_strength,dzdt_prev1,dzdt_prev2)
+
+    N_new = N + number_inserted
+    z_new = np.empty(N_new, dtype=np.complex128)
+    alpha_new = np.empty(N_new, dtype=np.float64)
+    gamma_new = np.empty(N_new, dtype=np.float64)
+    u1_new = np.empty(N_new, dtype=np.complex128)
+    u2_new = np.empty(N_new, dtype=np.complex128)
+
+    out = 0 # destination in expanded array
+    k = 0 # identifies next requested insertion
+    for i in range(N):
+        z_new[out] = z[i]
+        alpha_new[out] = alpha[i]
+        gamma_new[out] = sheet_strength[i]
+        u1_new[out] = dzdt_prev1[i]
+        u2_new[out] = dzdt_prev2[i]
+        out = out + 1
+        if(k < number_inserted and insert_after[k] == i):
+            if(i < N-1):
+                z_insert = 0.5*(z[i] + z[i+1])
+                alpha_insert = 0.5*(alpha[i] + alpha[i+1])
+                gamma_insert = 0.5*(sheet_strength[i] + sheet_strength[i+1])
+                u1_insert = 0.5*(dzdt_prev1[i] + dzdt_prev1[i+1])
+                u2_insert = 0.5*(dzdt_prev2[i] + dzdt_prev2[i+1])
+            else:
+                z_insert = 0.5*(z[N-1] + wavelength + z[0])
+                alpha_insert = 0.5*(alpha[N-1] + alpha[0] + 1.0)
+                gamma_insert = 0.5*(sheet_strength[N-1] + sheet_strength[0])
+                u1_insert = 0.5*(dzdt_prev1[N-1] + dzdt_prev1[0])
+                u2_insert = 0.5*(dzdt_prev2[N-1] + dzdt_prev2[0])
+            z_new[out] = z_insert
+            alpha_new[out] = alpha_insert
+            gamma_new[out] = gamma_insert
+            u1_new[out] = u1_insert
+            u2_new[out] = u2_insert
+            
+            out = out + 1
+            k = k + 1
+    return(N_new-N,z_new, alpha_new, gamma_new, u1_new, u2_new)
+
+
+    
+    
+    
+
+
+
     return(z,alpha,dzdt_prev1,dzdt_prev2)
 
 

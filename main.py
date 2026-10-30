@@ -131,8 +131,8 @@ def run_dynamic_simulation(
         # Save for animation if applicable
         if(disp==True):
             if(sim_step%disp_rate==0 and sim_step != 0):
-                print(f"-" * 50)
-                print(f"\n--- SIM STEP {sim_step} @ t={time}")
+                print(f"\n-" * 50)
+                print(f"SIM STEP {sim_step} @ t={time}")
                 print(f"Total Circulation = {np.sum(dGamma)}")
                 print(f"Sheet size = {N} points")
                 print(f"Timestep = {dt}")
@@ -142,13 +142,17 @@ def run_dynamic_simulation(
         time_history.append(time)
         
 
-        vs.z,vs.alpha,velocity_prev1,velocity_prev2 = functions.point_insertion(
-            vs.z,
-            vs.alpha,
-            velocity_prev1,
-            velocity_prev2,
-            delta / 10
-        )
+        num_insert = 1
+        while(num_insert > 0):
+            num_insert,vs.z,vs.alpha,vs.sheet_strength,velocity_prev1,velocity_prev2 = functions.point_insertion(
+                vs.z,
+                vs.alpha,
+                vs.sheet_strength,
+                velocity_prev1,
+                velocity_prev2,
+                wavelength,
+                delta / 20
+            )
         N = np.size(vs.z)
 
         # Compute immediately available quantities at time t:
@@ -198,8 +202,6 @@ def run_dynamic_simulation(
             dUdt = (c1 * vs.dzdt - c2 * velocity_prev1 + c3 * velocity_prev2)/dt_prev1
         elif(sim_step == 1):
             dUdt = (vs.dzdt - velocity_prev1)/dt_prev1
-        else:
-            dUdt = np.zeros(N, dtype=np.complex128) # NOTE this is a placeholder for the analytical expression
 
         # Compute numerical flux dFds
         dFds = functions.compute_dFds(
@@ -209,14 +211,29 @@ def run_dynamic_simulation(
         )
 
         # Compute the sheet strength derivative, d\gamma/dt
-        dgammadt = (
-            -2 * atwood_number * (
-            functions.complex_dot(dUdt, vs.tangent_vector)
-            - functions.complex_dot(rt_accel, vs.tangent_vector)
-            ) 
-            - dFds 
-            - vs.sheet_strength * functions.complex_dot(dUds, vs.tangent_vector)
-        )
+        if(sim_step != 0):
+            dgammadt = (
+                -2 * atwood_number * (
+                functions.complex_dot(dUdt, vs.tangent_vector)
+                - functions.complex_dot(rt_accel, vs.tangent_vector)
+                ) 
+                - dFds 
+                - vs.sheet_strength * functions.complex_dot(dUds, vs.tangent_vector)
+            )
+        else:
+            dgammadt = functions.compute_exact_dgammadt(
+                vs.z,
+                vs.dzdt,
+                vs.sheet_strength,
+                ds,
+                dFds,
+                dUds,
+                vs.tangent_vector,
+                atwood_number,
+                rt_accel,
+                wavenumber,
+                delta
+            )
         vs.sheet_strength = vs.sheet_strength + dt * dgammadt # NOTE this is a placeholder for potentially higher-order (2nd order) time integration, although the flux is still 1st order(?)
         if(sim_step >= 1):
             vs.z = functions.integrate_ab2_adaptive(
@@ -273,6 +290,7 @@ def run_dynamic_simulation(
 
 
 def main():
+    
     # KRASNY ICS:
     N = 1000
     dGamma = np.ones(N)
@@ -288,6 +306,18 @@ def main():
         z,
         1
     )
+    
+
+    '''
+    # PELLONE ICS:
+    N = 1000
+    x = np.linspace(0, 1, N)
+    y = np.zeros(N)
+    z = x+1j*y
+    sheet_str = np.cos(2*np.pi*x)
+    ds = functions.compute_ds(z,1)
+    dGamma = sheet_str * ds
+    '''
 
     sim_hist, dt_hist = run_dynamic_simulation(
         x,
