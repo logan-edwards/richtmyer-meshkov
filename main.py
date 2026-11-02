@@ -9,78 +9,6 @@ import classes
 import numpy as np
 import copy
 
-def run_kinematic_simulation(
-    x, 
-    y, 
-    circulation, 
-    final_time,
-    dt,
-    wavenumber,
-    delta,
-    enable_animation
-    ):
-    '''
-    run_kinematic_simulation
-
-    Simulates the vortex sheet roll-up from the purely kinematic description,
-    i.e. by solving the Birkhoff-Rott equation with constant sheet strength in
-    time.
-
-    Args:
-        
-    Returns:
-        Instance of the VortexSheet class
-    '''
-
-    vs = classes.VortexSheet(
-        x,
-        y,
-        np.full(np.size(x), np.nan),
-        np.full(np.size(x), np.nan),
-        circulation
-    )
-
-    Nt = int(final_time / dt) + 1
-    if(enable_animation == True):
-        z_data = np.full((np.size(x), Nt), np.nan+1j*np.nan)
-        z_data[:,0] = np.copy(vs.z)
-
-    for i in range(0,Nt):
-        velocity_prev = np.copy(vs.dzdt)
-        if(enable_animation == True):
-            z_data[:,i] = np.copy(vs.z)
-        vs.dzdt = functions.compute_sheet_velocity(
-            vs.z,
-            vs.circulation,
-            wavenumber,
-            delta
-        )
-        if(i > 1):
-            vs.z = functions.integrate_ab2(
-                vs.z,
-                vs.dzdt,
-                velocity_prev,
-                dt
-            )
-        else:
-            vs.z = functions.integrate_euler(
-                vs.z,
-                vs.dzdt,
-                dt
-            )
-        velocity_prev = np.copy(vs.dzdt)   
-        
-                 
-
-    if(enable_animation == True):
-        functions.animate_sheet(
-            z_data,
-            np.linspace(0,final_time,Nt),
-            'animation.mp4'
-        )
-    
-    return(vs)
-
 def run_dynamic_simulation(
     x,
     y,
@@ -131,12 +59,11 @@ def run_dynamic_simulation(
         # Save for animation if applicable
         if(disp==True):
             if(sim_step%disp_rate==0 and sim_step != 0):
-                print(f"\n-" * 50)
+                print(f"\n")
                 print(f"SIM STEP {sim_step} @ t={time}")
                 print(f"Total Circulation = {np.sum(dGamma)}")
                 print(f"Sheet size = {N} points")
                 print(f"Timestep = {dt}")
-                print(f"-" * 50)
 
         sim_history.append(copy.deepcopy(vs)) # NOTE this is fairly expensive and should be changed to only save data when wanted
         time_history.append(time)
@@ -151,7 +78,7 @@ def run_dynamic_simulation(
                 velocity_prev1,
                 velocity_prev2,
                 wavelength,
-                delta / 20
+                delta/20
             )
         N = np.size(vs.z)
 
@@ -184,7 +111,7 @@ def run_dynamic_simulation(
         # Then: take min value between dt and the time to the end of sim as dt
 
         CFL = 0.5*dt*np.max(np.abs(atwood_number*vs.sheet_strength)/ds)
-        if(CFL < 0.05):
+        if(CFL < 0.05 and atwood_number != 0):
             dt = 1.25 * dt
         elif(CFL > 0.3):
             dt = 0.5 * dt # NOTE this should be refined to repeatedly half dt until CFL is met.
@@ -193,7 +120,7 @@ def run_dynamic_simulation(
         # Compute dU/dt
         # If we are on the 2nd or greater sim step, use BDF2
         # If we are on the 1st sim step, use BDF1
-        # If we are on the 0th (initial) step, use analytical expression
+        # If we are on the 0th (initial) step, use analytical expression (later)
         if(sim_step >= 2):
             r = dt_prev1/dt_prev2
             c1 = (1+2*r)/(1+r)
@@ -221,6 +148,7 @@ def run_dynamic_simulation(
                 - vs.sheet_strength * functions.complex_dot(dUds, vs.tangent_vector)
             )
         else:
+            # If first sim step, use an analytical expression
             dgammadt = functions.compute_exact_dgammadt(
                 vs.z,
                 vs.dzdt,
@@ -290,8 +218,25 @@ def run_dynamic_simulation(
 
 
 def main():
+
     
-    # KRASNY ICS:
+    # KRASNY ICS exact for K-H
+    N = 1500
+    dGamma = np.ones(N)
+    dGamma = dGamma * (1/N)
+    x = np.zeros(N)
+    y = np.zeros(N)
+    for i in range(N):
+        x[i] = i * dGamma[i] + 0.01 * np.sin(2*np.pi*i*dGamma[i])
+        y[i] = -0.01 * np.sin(2*np.pi*i*dGamma[i])
+    z = x+1j*y
+    ds = functions.compute_ds(
+        z,
+        1
+    )
+    
+    
+    '''# KRASNY-based ICS:
     N = 1000
     dGamma = np.ones(N)
     dGamma = dGamma * (1/N)
@@ -305,7 +250,7 @@ def main():
     ds = functions.compute_ds(
         z,
         1
-    )
+    )'''
     
 
     '''
@@ -319,14 +264,15 @@ def main():
     dGamma = sheet_str * ds
     '''
 
+    
     sim_hist, dt_hist = run_dynamic_simulation(
         x,
         y,
         dGamma/ds,
-        0.6,
+        -0.6, # atwood number
         0j,        # NOTE check sign convention on this
-        1.5,
-        0.0001,
+        4, # final time
+        0.005, # timestep
         2*np.pi,
         0.1,
         True,
@@ -334,6 +280,7 @@ def main():
         True,
         20
     )
+    
 
     return(0)
 
