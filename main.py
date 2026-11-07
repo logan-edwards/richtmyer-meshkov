@@ -5,6 +5,7 @@ main.py
 '''
 import functions
 import classes
+import ic
 
 import numpy as np
 import copy
@@ -219,7 +220,7 @@ def run_dynamic_simulation(
 
 def main():
 
-    
+    '''
     # KRASNY ICS exact for K-H
     N = 1500
     dGamma = np.ones(N)
@@ -234,6 +235,7 @@ def main():
         z,
         1
     )
+    '''
     
     
     '''# KRASNY-based ICS:
@@ -264,14 +266,28 @@ def main():
     dGamma = sheet_str * ds
     '''
 
-    
+    N = 1000
+    x = np.zeros(N)
+    y = np.zeros(N)
+    for i in range(N):
+        x[i] = i/N
+        y[i] = -0.01*np.cos(2*np.pi*x[i])
+    z, dGammads = ic.light_to_heavy_smallamp(
+        2,
+        0.6,
+        0*np.pi,
+        1.4,
+        1,
+        x+1j*y
+    )
+
     sim_hist, dt_hist = run_dynamic_simulation(
-        x,
-        y,
-        dGamma/ds,
-        -0.6, # atwood number
+        np.real(z),
+        np.imag(z),
+        dGammads,
+        0.6, # atwood number
         0j,        # NOTE check sign convention on this
-        4, # final time
+        20, # final time
         0.005, # timestep
         2*np.pi,
         0.1,

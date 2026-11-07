@@ -318,8 +318,7 @@ def compute_exact_dgammadt(
             coeffs[i,j] = complex_dot(tangent_vector[i], K[i,j] * ds[j])
 
     dgammadt = np.linalg.solve(2 * atwood_number * coeffs + np.identity(N), R)
-    return(dgammadt)
-    
+    return(dgammadt)    
 
 @njit
 def point_insertion(
