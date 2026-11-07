@@ -6,8 +6,10 @@ main.py
 import functions
 import classes
 import ic
+import plot
 
 import numpy as np
+import matplotlib.pyplot as plt
 import copy
 
 def run_dynamic_simulation(
@@ -20,10 +22,7 @@ def run_dynamic_simulation(
     dt,
     wavenumber,
     delta,
-    enable_animation,
-    save_rate,
-    disp,
-    disp_rate
+    save_rate
     ):
     '''
     run_dynamic_simulation
@@ -58,16 +57,16 @@ def run_dynamic_simulation(
     sim_step = 0
     while(time < final_time):
         # Save for animation if applicable
-        if(disp==True):
-            if(sim_step%disp_rate==0 and sim_step != 0):
+        if(save_rate > 0):
+            if(sim_step % save_rate == 0 and sim_step != 0):
                 print(f"\n")
-                print(f"SIM STEP {sim_step} @ t={time}")
+                print(f"Saved at SIM STEP {sim_step} @ t={time}")
                 print(f"Total Circulation = {np.sum(dGamma)}")
                 print(f"Sheet size = {N} points")
                 print(f"Timestep = {dt}")
 
-        sim_history.append(copy.deepcopy(vs)) # NOTE this is fairly expensive and should be changed to only save data when wanted
-        time_history.append(time)
+                sim_history.append(copy.deepcopy(vs)) # NOTE this is fairly expensive and should be changed to only save data when wanted
+                time_history.append(time)
         
 
         num_insert = 1
@@ -186,35 +185,6 @@ def run_dynamic_simulation(
         sim_step += 1
         time = time + dt
 
-    if(enable_animation == True):
-        z_frames = []
-        sheet_str_frames = []
-        alpha_frames = []
-        frame_times = []
-        for i in range(len(sim_history)):
-            if(i%save_rate == 0):
-                z_frames.append(sim_history[i].z)
-                sheet_str_frames.append(sim_history[i].sheet_strength)
-                alpha_frames.append(sim_history[i].alpha)
-                strength_plot_frames = [
-                    material_coord + 1j * sheet_strength
-                    for material_coord, sheet_strength
-                    in zip(alpha_frames, sheet_str_frames)
-                ]
-                frame_times.append(time_history[i])
-        functions.animate_sheet(
-        z_frames,
-        frame_times,
-        'animation.mp4',
-        'equal'
-        )
-        functions.animate_sheet(
-            strength_plot_frames,
-            frame_times,
-            'sheet_strength.mp4',
-            'auto'
-        )
-
     return(sim_history,time_history)
 
 
@@ -266,37 +236,116 @@ def main():
     dGamma = sheet_str * ds
     '''
 
-    N = 1000
+    A = 0.6
+    M_s = 2
+    theta_s = 0
+
+    N = 1500
     x = np.zeros(N)
     y = np.zeros(N)
     for i in range(N):
         x[i] = i/N
         y[i] = -0.01*np.cos(2*np.pi*x[i])
     z, dGammads = ic.light_to_heavy_smallamp(
-        2,
-        0.6,
-        0*np.pi,
+        M_s,
+        A,
+        theta_s,
         1.4,
         1,
         x+1j*y
     )
 
-    sim_hist, dt_hist = run_dynamic_simulation(
+    sim_hist, time_hist = run_dynamic_simulation(
         np.real(z),
         np.imag(z),
         dGammads,
-        0.6, # atwood number
+        A, # atwood number
         0j,        # NOTE check sign convention on this
-        20, # final time
+        1, # final time
         0.005, # timestep
         2*np.pi,
         0.1,
-        True,
-        20,
-        True,
-        20
+        1
     )
-    
+
+    save_animation = True
+    save_plots = True
+
+    if(save_animation == True):
+        frame_selection = 1
+
+        selected_history = sim_hist[::frame_selection]
+        selected_times = time_hist[::frame_selection]
+
+        z_frames = [vs.z.copy() for vs in selected_history]
+
+        strength_frames = [
+            vs.alpha + 1j * vs.sheet_strength
+            for vs in selected_history
+        ]
+
+        plot.animate_sheet(
+            z_frames,
+            selected_times,
+            'animation.mp4',
+            'equal'
+        )
+
+        plot.animate_sheet(
+            strength_frames,
+            selected_times,
+            'sheet_strength.mp4',
+            'auto'
+        )
+
+    if(save_plots == True):
+        n_frames = 5
+
+        saved_times = np.asarray(time_hist)
+
+        target_times = np.linspace(
+            saved_times[0],
+            saved_times[-1],
+            n_frames
+        )
+
+        indices = [
+            int(np.argmin(np.abs(saved_times - t)))
+            for t in target_times
+        ]
+
+        selected_times = saved_times[indices]
+        selected_history = [sim_hist[i] for i in indices]
+
+        z_frames = [vs.z.copy() for vs in selected_history]
+
+        strength_frames = [
+            vs.alpha + 1j * vs.sheet_strength
+            for vs in selected_history
+        ]
+
+        fig1, ax1 = plot.plot_side_by_side(
+            z_frames,
+            selected_times,
+            x_scale=1,
+            y_scale=1,
+            xlabel=r"$x/\lambda$",
+            ylabel=r"$y/\lambda$",
+            equal_aspect=True,
+            top_axis=True,
+            colors=['black','black','black','black','black']
+        )
+
+        fig2, ax2 = plot.plot_side_by_side(
+            strength_frames,
+            selected_times,
+            xlabel=r"$\alpha$",
+            ylabel=r"$\gamma$",
+            zero_line=True,
+            equal_aspect=False,
+            colors=['black','black','black','black','black']
+        )
+        plt.show()
 
     return(0)
 

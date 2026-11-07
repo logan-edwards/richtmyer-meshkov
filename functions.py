@@ -13,8 +13,6 @@ Dependencies: numpy, numba
 
 import numpy as np
 from numba import njit, prange, objmode
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
 import time
 
 @njit
@@ -122,6 +120,8 @@ def compute_dFds(
     # TODO: check if the loop for computing fluxes can be parallelized
     # TODO: comment the code better
 
+    # NOTE this code assumes positive atwood number, i.e. A > 0
+
     N = np.size(sheet_strength)
 
     def f(gamma, A):
@@ -131,21 +131,27 @@ def compute_dFds(
         gammaL = sheet_strength[i]
         gammaR = sheet_strength[i+1]
         if(gammaL < gammaR):
-            F[i] = min(f(gammaL, atwood_number), f(gammaR, atwood_number))
+            if(gammaL <= 0 and gammaR >= 0):
+                F[i] = 0
+            else:
+                F[i] = min(f(gammaL, atwood_number), f(gammaR, atwood_number))
         elif(gammaL > gammaR):
             F[i] = max(f(gammaL, atwood_number), f(gammaR, atwood_number))
         else:
-            F[i] = min(f(gammaL, atwood_number), 0)
+            F[i] = f(gammaL, atwood_number)
 
     # Rightmost endpoint, which wraps
     gammaL = sheet_strength[N-1]
     gammaR = sheet_strength[0]
     if(gammaL < gammaR):
-        F[N-1] = min(f(gammaL, atwood_number), f(gammaR, atwood_number))
+        if(gammaL <= 0 and gammaR >= 0):
+            F[N-1] = 0
+        else:
+            F[N-1] = min(f(gammaL, atwood_number), f(gammaR, atwood_number))
     elif(gammaL > gammaR):
         F[N-1] = max(f(gammaL, atwood_number), f(gammaR, atwood_number))
     else:
-        F[N-1] = min(f(gammaL, atwood_number), 0)
+        F[N-1] = f(gammaL, atwood_number)
 
     dFds = np.zeros(N)
     for i in range(1, N):
@@ -168,91 +174,6 @@ def compute_dUds(
 
     return(dUds)    
 
-
-@njit(parallel=True)
-def update_sheet_strength(
-    atwood_number,
-    tangent_vector,
-    dUdt,
-    acceleration,
-    sheet_strength,
-    dUds,
-    dt,
-    ds_cell
-    ):
-    '''
-    THIS FUNCTION IS DEPRECATED
-
-    compute_sheet_strength_derivative
-
-    This function computes the derivative of sheet strength with respect to
-    time, dgamma/dt.
-
-    Arguments:
-        atwood_number (scalar): the Atwood number, A=(rho- - rho+)/(rho+ + rho-)
-
-        tangent_vector (vector, complex): an array containing the unit tangent
-        vector (a complex number with modulus 1) at each point on the sheet.
-
-        dUdt (vector, complex): an array containing the fluid acceleration
-        induced by the motion of the sheet itself.
-
-        dgamma2ds (vector, real): an array containing the derivative of
-        (gamma^2) with respect to s, relating to the advection of sheet strength
-        across the vortex sheet.
-
-        acceleration (vector, complex): an array containing the complex-valued
-        reference frame acceleration; a nonzero acceleration term corresponds to
-        a coupled Rayleigh-Taylor instability.
-
-        sheet_strength (vector, real): an array containing the real-valued sheet
-        strength at each point on the body.
-
-        dUds (vector, complex): a vector containing the complex-valued
-        derivative of vortex sheet velocity with respect to arclength. This term
-        represents the effect of sheet stretching on sheet strength evolution.
-
-    Returns:
-        vector of real-valued time derivatives of sheet strength.
-    '''
-    if(atwood_number == 0):
-        return(-sheet_strength * complex_dot(dUds, tangent_vector))
-    N = np.size(tangent_vector)
-    RHS = -2 * atwood_number * (
-        complex_dot(dUdt, tangent_vector) +
-        complex_dot(acceleration, tangent_vector)
-    ) - sheet_strength * complex_dot(dUds, tangent_vector)
-
-    def f(gamma, A):
-        return((A/4)*gamma**2)
-    F = np.zeros(N)
-    for j in range(0, N-1):
-        gammaL = sheet_strength[j]
-        gammaR = sheet_strength[j+1]
-        if(gammaL < gammaR):
-            F[j] = min(f(gammaL, atwood_number), f(gammaR, atwood_number))
-        elif(gammaL > gammaR):
-            F[j] = max(f(gammaL, atwood_number), f(gammaR, atwood_number))
-        else:
-            F[j] = min(f(gammaL, atwood_number), 0)
-
-    # Rightmost endpoint, which wraps
-    gammaL = sheet_strength[N-1]
-    gammaR = sheet_strength[0]
-    if(gammaL < gammaR):
-        F[N-1] = min(f(gammaL, atwood_number), f(gammaR, atwood_number))
-    elif(gammaL > gammaR):
-        F[N-1] = max(f(gammaL, atwood_number), f(gammaR, atwood_number))
-    else:
-        F[N-1] = min(f(gammaL, atwood_number), 0)
-
-    gamma_new = np.zeros(N)
-    for j in range(1, N):
-        gamma_new[j] = sheet_strength[j] - (dt/ds_cell[j]) * (
-            F[j] - F[j-1]) + dt*RHS[j]
-    gamma_new[0] = sheet_strength[0] - (dt/ds_cell[0]) * (
-        F[0] - F[N-1]) + dt*RHS[0]
-    return(gamma_new)
 
 @njit(parallel=True)
 def compute_exact_dgammadt(
@@ -278,9 +199,10 @@ def compute_exact_dgammadt(
     K = np.zeros((N,N), dtype=np.complex128)
     dKdt = np.zeros((N,N), dtype=np.complex128)
     ddsdt = np.zeros(N)
-    for i in prange(N-1):
-        ddsdt[i] = complex_dot(tangent_vector[i],  (dzdt[i+1] - dzdt[i]))
-    ddsdt[N-1] = complex_dot(tangent_vector[N-1], (dzdt[0] - dzdt[N-1]))
+    for i in prange(1, N-1):
+        ddsdt[i] = complex_dot(tangent_vector[i],  (dzdt[i+1] - dzdt[i-1]))
+    ddsdt[N-1] = complex_dot(tangent_vector[N-1], (dzdt[0] - dzdt[N-2]))
+    ddsdt[0] = complex_dot(tangent_vector[0], (dzdt[1] - dzdt[N-1]))
     dUdt_sum = np.zeros(N, dtype=np.complex128)
     for i in prange(N):
         for j in range(N):
@@ -581,55 +503,3 @@ def integrate_ab2_adaptive(
             - 0.5 * r * sheet_dzdt_prev[i]
         )
     return(sheet_z)
-
-def animate_sheet(
-    z_data,
-    time,
-    filename,
-    aspect_ratio
-    ):
-    fig, ax = plt.subplots()
-
-    n_frames = len(z_data)
-
-    sheet_line, = ax.plot(
-        np.real(z_data[0]),
-        np.imag(z_data[0]),
-        'k-'
-    )
-    
-    xmin = min(np.min(np.real(z)) for z in z_data)
-    xmax = max(np.max(np.real(z)) for z in z_data)
-    ymin = min(np.min(np.imag(z)) for z in z_data)
-    ymax = max(np.max(np.imag(z)) for z in z_data)
-
-    ax.set_xlim(xmin, xmax)
-    ax.set_ylim(ymin, ymax)
-    ax.set_aspect(aspect_ratio)
-
-    title = ax.set_title(f"t={time[0]:.2f}")
-
-    def update(frame):
-        # Each frame may contain a different number of markers.
-        sheet_line.set_xdata(np.real(z_data[frame]))
-        sheet_line.set_ydata(np.imag(z_data[frame]))
-
-        title.set_text(f"t={time[frame]:.2f}")
-
-        return sheet_line, title
-
-    desired_time = 10  # seconds
-    fps_desired = n_frames / desired_time
-    interval_desired = desired_time * 1000 / n_frames
-
-    print(f"framerate = {fps_desired} fps")
-
-    sheet_animation = animation.FuncAnimation(
-        fig,
-        update,
-        frames=n_frames,
-        interval=interval_desired,
-        blit=False
-    )
-
-    sheet_animation.save(filename, writer='ffmpeg', fps=fps_desired)
