@@ -207,37 +207,9 @@ def main():
     )
     '''
     
-    
-    '''# KRASNY-based ICS:
-    N = 1000
-    dGamma = np.ones(N)
-    dGamma = dGamma * (1/N)
-    x = np.zeros(N)
-    y = np.zeros(N)
-    for i in range(N):
-        x[i] = i*dGamma[i]
-        y[i] = 0
-        dGamma[i] = dGamma[i] * 2*np.sin(2*np.pi*x[i])
-    z = x+1j*y
-    ds = functions.compute_ds(
-        z,
-        1
-    )'''
-    
-
-    '''
-    # PELLONE ICS:
-    N = 1000
-    x = np.linspace(0, 1, N)
-    y = np.zeros(N)
-    z = x+1j*y
-    sheet_str = np.cos(2*np.pi*x)
-    ds = functions.compute_ds(z,1)
-    dGamma = sheet_str * ds
-    '''
 
     A = 0.6
-    M_s = 2
+    M_s = 5
     theta_s = 0
 
     N = 1500
@@ -261,14 +233,14 @@ def main():
         dGammads,
         A, # atwood number
         0j,        # NOTE check sign convention on this
-        1, # final time
+        20, # final time
         0.005, # timestep
         2*np.pi,
         0.1,
         1
     )
 
-    save_animation = True
+    save_animation = False
     save_plots = True
 
     if(save_animation == True):
@@ -310,23 +282,47 @@ def main():
         )
 
         indices = [
-            int(np.argmin(np.abs(saved_times - t)))
-            for t in target_times
+            int(np.argmin(np.abs(saved_times - t))) for t in target_times
         ]
 
         selected_times = saved_times[indices]
         selected_history = [sim_hist[i] for i in indices]
 
+        dash_indices = []
+
+        initial_frame = selected_history[0]
+
+        # Replace sheet_coordinate with your actual coordinate attribute.
+        initial_coordinate = initial_frame.alpha
+        initial_strength = initial_frame.sheet_strength
+
+        dash_indices = []
+
+        for frame in selected_history:
+            reference_strength = np.interp(
+                frame.alpha,
+                initial_coordinate,
+                initial_strength,
+            )
+
+            changed_sign = []
+
+            for j in range(len(frame.sheet_strength)):
+                if reference_strength[j] * frame.sheet_strength[j] < 0:
+                    changed_sign.append(j)
+
+            dash_indices.append(changed_sign)
+
         z_frames = [vs.z.copy() for vs in selected_history]
 
         strength_frames = [
-            vs.alpha + 1j * vs.sheet_strength
-            for vs in selected_history
+            vs.alpha + 1j * vs.sheet_strength for vs in selected_history
         ]
 
         fig1, ax1 = plot.plot_side_by_side(
             z_frames,
             selected_times,
+            dash_indices=dash_indices,
             x_scale=1,
             y_scale=1,
             xlabel=r"$x/\lambda$",

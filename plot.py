@@ -54,14 +54,16 @@ def animate_sheet(
 
     sheet_animation.save(filename, writer='ffmpeg', fps=fps_desired)
 
+# NOTE the below code is AI-generated...
 def plot_side_by_side(
     frames,
     times,
+    dash_indices=None,
     x_scale=1.0,
     y_scale=1.0,
     panel_origin=0.0,
     panel_width=1.0,
-    colors=None,
+    colors="black",
     xlabel="",
     ylabel="",
     time_unit="",
@@ -74,141 +76,114 @@ def plot_side_by_side(
     figsize=None,
     save_path=None,
 ):
-    """
-    Plot complex-valued snapshots in adjacent horizontal panels.
+    number_frames = len(frames)
 
-    Each frame is a 1D complex array:
-        real(frame) / x_scale -> local horizontal coordinate
-        imag(frame) / y_scale -> vertical coordinate
+    if dash_indices is None:
+        dash_indices = [[] for f in range(number_frames)]
 
-    Each successive frame is shifted right by panel_width.
+    if isinstance(colors, str):
+        colors = [colors] * number_frames
 
-    panel_origin and panel_width are in scaled horizontal coordinates.
-    Frames may contain different numbers of points.
+    fig, axes = plt.subplots(
+        1,
+        number_frames,
+        sharey=True,
+        squeeze=False,
+        figsize=figsize,
+    )
+    axes = axes[0]
 
-    Returns
-    -------
-    fig, ax
-        Matplotlib figure and axes.
-    """
-    frames = list(frames)
-    times = np.asarray(times)
+    # Make neighboring panels touch.
+    fig.subplots_adjust(wspace=0)
 
-    if len(frames) == 0:
-        raise ValueError("len(frames) = 0")
-    if times.ndim != 1 or len(frames) != len(times):
-        raise ValueError("data does not match up")
-    if x_scale <= 0 or y_scale <= 0 or panel_width <= 0:
-        raise ValueError("negative geometric scales provided")
+    for f in range(number_frames):
+        ax = axes[f]
+        frame = np.asarray(frames[f])
+        color = colors[f]
 
-    n_frames = len(frames)
+        x = frame.real / x_scale
+        y = frame.imag / y_scale
 
-    if colors is None:
-        default_colors = [
-            "blue", "orangered", "green", "crimson", "navy"
-        ]
-        colors = [
-            default_colors[i % len(default_colors)]
-            for i in range(n_frames)
-        ]
-    else:
-        colors = list(colors)
-        if len(colors) != n_frames:
-            raise ValueError("Provide one color per frame.")
+        # Plot each segment with its requested line style.
+        number_segments = len(frame) - 1
 
-    if figsize is None:
-        figsize = (2.4 * n_frames, 3.2)
+        segment_start = 0
 
-    fig, ax = plt.subplots(figsize=figsize, layout="constrained")
+        while segment_start < number_segments:
+            is_dashed = segment_start in dash_indices[f]
+            segment_end = segment_start + 1
 
-    left = panel_origin
-    right = left + n_frames * panel_width
+            # Extend the group while the line style stays the same.
+            while segment_end < number_segments:
+                next_is_dashed = segment_end in dash_indices[f]
 
-    # Internal panel boundaries.
-    for i in range(1, n_frames):
-        boundary = left + i * panel_width
-        ax.axvline(
-            boundary,
-            color="0.35",
-            linewidth=0.8,
-            linestyle=(0, (8, 6)),
-            zorder=0,
+                if next_is_dashed != is_dashed:
+                    break
+
+                segment_end += 1
+
+            if is_dashed:
+                line_style = "--"
+            else:
+                line_style = "-"
+
+            # Include the endpoint of the last segment.
+            ax.plot(
+                x[segment_start:segment_end + 1],
+                y[segment_start:segment_end + 1],
+                color=color,
+                linestyle=line_style,
+            )
+
+            segment_start = segment_end
+
+        ax.set_xlim(panel_origin, panel_origin + panel_width)
+
+        displayed_time = times[f] * time_scale
+        time_label = f"$t = {displayed_time:g}$ {time_unit}"
+
+        # Use the title area for each panel's time label.
+        ax.set_title(time_label, color=color)
+
+        if zero_line:
+            ax.axhline(0, color="black", linestyle="--")
+
+        ax.tick_params(
+            direction="in",
+            top=True,
+            left=(f == 0),
+            right=(f == number_frames - 1),
+            labelleft=(f == 0),
         )
 
-    if zero_line:
-        ax.axhline(
-            0.0,
-            color="0.35",
-            linewidth=0.8,
-            linestyle=(0, (8, 6)),
-            zorder=0,
-        )
+        # Keep only one spine at each internal boundary.
+        if f > 0:
+            ax.spines["left"].set_visible(False)
 
-    for i, (frame, time, color) in enumerate(
-        zip(frames, times, colors)
-    ):
-        frame = np.asarray(frame)
+        if top_axis:
+            ax.tick_params(
+                axis="x",
+                labeltop=True,
+                labelbottom=False,
+            )
 
-        if frame.ndim != 1:
-            raise ValueError("Each frame must be a 1D array.")
-
-        # Preserve point ordering along the sheet.
-        x_plot = frame.real / x_scale + i * panel_width
-        y_plot = frame.imag / y_scale
-
-        ax.plot(x_plot, y_plot, color=color, linewidth=1.1)
-
-        # Horizontal position in data coordinates;
-        # vertical position as a fraction of axes height.
-        label_x = left + (i + 0.5) * panel_width
-        displayed_time = time * time_scale
-        label = f"$t = {displayed_time:g}$"
-        if time_unit:
-            label += f" {time_unit}"
-
-        ax.text(
-            label_x,
-            0.96,
-            label,
-            transform=ax.get_xaxis_transform(),
-            ha="center",
-            va="top",
-            color=color,
-            fontsize=12,
-        )
-
-    ax.set_xlim(left, right)
+        if equal_aspect:
+            ax.set_aspect("equal", adjustable="box")
 
     if ylim is not None:
-        ax.set_ylim(*ylim)
-    else:
-        ax.margins(y=0.18)
+        axes[0].set_ylim(ylim)
 
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
-
-    ax.tick_params(
-        axis="both",
-        direction="in",
-        top=True,
-        right=True,
-    )
+    axes[0].set_ylabel(ylabel)
 
     if top_axis:
-        ax.xaxis.set_label_position("top")
-        ax.tick_params(
-            axis="x",
-            labeltop=True,
-            labelbottom=False,
-        )
-
-    if equal_aspect:
-        ax.set_aspect("equal", adjustable="box")
+        fig.text(0.5, 1.0, xlabel, ha="center", va="bottom")
+    else:
+        fig.supxlabel(xlabel)
 
     if title is not None:
-        ax.set_title(title)
+        fig.suptitle(title)
 
     if save_path is not None:
-        fig.savefig(save_path, dpi=300, bbox_inches="tight")
+        fig.savefig(save_path, bbox_inches="tight")
 
-    return fig, ax
+    return fig, axes
