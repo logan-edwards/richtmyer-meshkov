@@ -4,7 +4,7 @@ class VortexSheet:
     N: int
     z: list
     dzdt: list
-    circulation: list
+    circulation: float
     sheet_strength: list
     alpha: list
     def __init__(

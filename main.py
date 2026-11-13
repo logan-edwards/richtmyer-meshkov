@@ -61,7 +61,8 @@ def run_dynamic_simulation(
             if(sim_step % save_rate == 0 and sim_step != 0):
                 print(f"\n")
                 print(f"Saved at SIM STEP {sim_step} @ t={time}")
-                print(f"Total Circulation = {np.sum(dGamma)}")
+                vs.circulation = np.sum(dGamma)
+                print(f"Total Circulation = {vs.circulation}")
                 print(f"Sheet size = {N} points")
                 print(f"Timestep = {dt}")
 
@@ -78,7 +79,7 @@ def run_dynamic_simulation(
                 velocity_prev1,
                 velocity_prev2,
                 wavelength,
-                delta/20
+                0.1*delta
             )
         N = np.size(vs.z)
 
@@ -209,8 +210,8 @@ def main():
     
 
     A = 0.6
-    M_s = 5
-    theta_s = 0
+    M_s = 2.5
+    theta_s = 15 * np.pi / 180
 
     N = 1500
     x = np.zeros(N)
@@ -227,24 +228,38 @@ def main():
         x+1j*y
     )
 
+    T = 
+
     sim_hist, time_hist = run_dynamic_simulation(
         np.real(z),
         np.imag(z),
         dGammads,
         A, # atwood number
         0j,        # NOTE check sign convention on this
-        20, # final time
+        5, # final time
         0.005, # timestep
         2*np.pi,
         0.1,
         1
     )
 
-    save_animation = False
+    save_animation = True
     save_plots = True
 
+    # This code block gets the net circulation and plots it over time
+    times = np.asarray(time_hist)
+    circulations = np.zeros_like(times)
+    num_pts = np.zeros_like(times)
+    for i in range(np.size(circulations)):
+        circulations[i] = sim_hist[i].circulation
+        num_pts[i] = np.size(sim_hist[i].z)
+    plt.plot(times, circulations)
+    plt.show()
+    plt.plot(times, num_pts)
+    plt.show()
+
     if(save_animation == True):
-        frame_selection = 1
+        frame_selection = 20
 
         selected_history = sim_hist[::frame_selection]
         selected_times = time_hist[::frame_selection]
